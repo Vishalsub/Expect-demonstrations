@@ -18,15 +18,16 @@ env = gym.make('PushingBall', render_mode='human')
 network = PushNetwork(obs_dim=25, goal_dim=3, action_dim=4)
 agent = PPOAgent(network)
 
-# Optimized Hyperparameters
-learning_rate = 3e-5
+# Hyperparameters
+policy_learning_rate = 3e-5
+value_learning_rate = 1e-5  # Lower LR for value function stability
 gamma = 0.99
 gae_lambda = 0.95
 clip_epsilon = 0.2
 initial_entropy_coef = 0.01
 final_entropy_coef = 0.0005
 decay_rate = 0.999  # Slower decay for better exploration
-value_loss_coef = 0.5
+value_loss_coef = 0.5  # Reduce to 0.3 if critic dominates
 max_grad_norm = 0.5
 num_epochs = 1000
 num_steps_per_update = 200
@@ -34,6 +35,20 @@ mini_batch_size = 64
 ppo_epochs = 10
 max_steps_per_episode = 1001
 reward_scaling = 0.1
+
+# 🟢 Reward Normalization
+class RewardNormalizer:
+    def __init__(self, alpha=0.99):
+        self.mean = 0
+        self.var = 1
+        self.alpha = alpha
+
+    def normalize(self, reward):
+        self.mean = self.alpha * self.mean + (1 - self.alpha) * reward
+        self.var = self.alpha * self.var + (1 - self.alpha) * (reward - self.mean) ** 2
+        return reward / (np.sqrt(self.var) + 1e-8)
+
+reward_normalizer = RewardNormalizer()
 
 # Rollout buffer
 class RolloutBuffer:
@@ -86,16 +101,15 @@ while episode < 1000:  # Run for 1,000 episodes first
         next_state, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
 
-        # Reward function with clipping & normalization
+        # 🟢 Normalize & Clip Reward
         distance_to_goal = np.linalg.norm(desired_goal - achieved_goal)
         reward = -distance_to_goal  
         if distance_to_goal < 0.05:
             reward += 10  
         reward += 5 * (1 - distance_to_goal)
 
-        # Normalize reward
-        reward /= 5  
-        reward = np.clip(reward, -10, 10)  # Clipping to avoid extreme values
+        reward = reward_normalizer.normalize(reward)  # Normalize reward
+        reward = np.clip(reward, -10, 10)  # Clip extreme values
 
         # Store transition in buffer
         buffer.observations.append(observation)
@@ -151,8 +165,8 @@ while episode < 1000:  # Run for 1,000 episodes first
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
             advantages *= reward_scaling
 
-            # Adaptive entropy decay
-            entropy_coef = max(final_entropy_coef, initial_entropy_coef * (decay_rate ** (episode / 10)))
+            # 🟢 Logarithmic Entropy Decay
+            entropy_coef = max(final_entropy_coef, initial_entropy_coef * np.exp(-0.0001 * episode))
 
             # Optimize policy for ppo_epochs
             for _ in range(ppo_epochs):
@@ -172,7 +186,7 @@ while episode < 1000:  # Run for 1,000 episodes first
                         'advantages': advantages[mb_indices],
                     }
 
-                    # Compute loss and update PPO
+                    # 🟢 Use Huber Loss Instead of MSE for Stability
                     total_loss, policy_loss, value_loss = agent.compute_loss(
                         batch_data, gamma, gae_lambda, clip_epsilon, value_loss_coef, entropy_coef
                     )
@@ -199,9 +213,9 @@ while episode < 1000:  # Run for 1,000 episodes first
     episode += 1
     rewards_per_episode.append(episode_rewards)
 
-    # Print every 10 episodes
-    if episode % 10 == 0:
-        print(f"Episode {episode} | Reward: {episode_rewards:.2f} | Avg Policy Loss: {np.mean(policy_losses[-10:]):.4f} | Avg Value Loss: {np.mean(value_losses[-10:]):.4f} | Steps: {total_steps}")
+    # 🟢 Monitor Value-to-Policy Loss Ratio
+    if len(value_losses) > 10:
+        print(f"Value/Policy Loss Ratio: {np.mean(value_losses[-10:]) / (np.mean(policy_losses[-10:]) + 1e-8):.2f}")
 
     # Save model every 1,000 episodes
     if episode % 1000 == 0:
