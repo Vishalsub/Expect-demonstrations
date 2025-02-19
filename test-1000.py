@@ -203,7 +203,7 @@ while episode < 1000:  # Run for 1,000 episodes first
                     total_losses.append(total_loss.item())
 
                     print(f"Episode {episode} | Grad Norm: {grad_norm:.3f} | Policy Loss: {policy_loss.item():.4f} | Value Loss: {value_loss.item():.4f}")
-
+                    print(f"Step {step} | Distance: {distance_to_goal:.4f} | Raw Reward: {-distance_to_goal:.4f} | Final Reward: {reward:.4f}")
             # Clear buffer
             buffer.clear()
 
