@@ -27,8 +27,8 @@ clip_epsilon = 0.2
 initial_entropy_coef = 0.01
 final_entropy_coef = 0.0005
 decay_rate = 0.999  
-value_loss_coef = 0.5  
-max_grad_norm = 0.5
+value_loss_coef = 0.3  # Reduced from 0.5 to balance critic
+max_grad_norm = 1.0  # Increased for better stability
 num_epochs = 1000
 num_steps_per_update = 200
 mini_batch_size = 64
@@ -36,7 +36,7 @@ ppo_epochs = 10
 max_steps_per_episode = 1001
 reward_scaling = 0.1
 
-#  Reward Normalization
+# Reward Normalization
 class RewardNormalizer:
     def __init__(self, alpha=0.99):
         self.mean = 0
@@ -84,6 +84,21 @@ total_losses = []
 total_steps = 0
 episode = 0
 
+def print_training_log(episode, step, grad_norm, policy_loss, value_loss, distance_to_goal, raw_reward, final_reward):
+    print("\n+----------------------+----------------------+")
+    print(f"| {'Metric':<20} | {'Value':<20} |")
+    print("+----------------------+----------------------+")
+    print(f"| {'Episode':<20} | {episode:<20} |")
+    print(f"| {'Step':<20} | {step:<20} |")
+    print(f"| {'Gradient Norm':<20} | {grad_norm:<20.4f} |")
+    print(f"| {'Policy Loss':<20} | {policy_loss:<20.6f} |")
+    print(f"| {'Value Loss':<20} | {value_loss:<20.6f} |")
+    print(f"| {'Distance to Goal':<20} | {distance_to_goal:<20.4f} |")
+    print(f"| {'Raw Reward':<20} | {raw_reward:<20.4f} |")
+    print(f"| {'Final Reward':<20} | {final_reward:<20.4f} |")
+    print("+----------------------+----------------------+\n")
+
+
 while episode < 1000:  
     state, info = env.reset()
     observation = state['observation']
@@ -97,142 +112,24 @@ while episode < 1000:
             action, log_prob, value = agent.select_action(observation, achieved_goal, desired_goal)
             action = np.tanh(action)
 
-        # Step environment
+        # 🟢 Step the environment
         next_state, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
 
-        #  Normalize & Clip Reward
+        # 🟢 Compute Raw Reward
         distance_to_goal = np.linalg.norm(desired_goal - achieved_goal)
-        reward = -distance_to_goal  
+        raw_reward = -distance_to_goal  
         if distance_to_goal < 0.05:
-            reward += 10  
-        reward += 5 * (1 - distance_to_goal)
-
-        reward = reward_normalizer.normalize(reward)  # Normalize reward
-        reward = np.clip(reward, -10, 10)  
-
-        # Store transition in buffer
-        buffer.observations.append(observation)
-        buffer.achieved_goals.append(achieved_goal)
-        buffer.desired_goals.append(desired_goal)
-        buffer.actions.append(action)
-        buffer.log_probs.append(log_prob)
-        buffer.values.append(value)
-        buffer.rewards.append(reward)
-        buffer.dones.append(done)
-
-        episode_rewards += reward
-
-        # Move to next state
-        observation = next_state['observation']
-        achieved_goal = next_state['achieved_goal']
-        desired_goal = next_state['desired_goal']
-
-        total_steps += 1
-
-        # PPO Update Step
-        if total_steps % num_steps_per_update == 0:
-            returns = []
-            advantages = []
-            G = 0
-            adv = 0
-            last_value = 0
-
-            if not done:
-                _, _, last_value = agent.select_action(observation, achieved_goal, desired_goal)
-            else:
-                last_value = 0
-
-            for i in reversed(range(len(buffer.rewards))):
-                mask = 1.0 - buffer.dones[i]
-                G = buffer.rewards[i] + gamma * G * mask
-                delta = buffer.rewards[i] + gamma * last_value * mask - buffer.values[i]
-                adv = delta + gamma * gae_lambda * adv * mask
-                returns.insert(0, G)
-                advantages.insert(0, adv)
-                last_value = buffer.values[i]
-
-            # Convert to numpy arrays
-            observations = np.array(buffer.observations)
-            achieved_goals = np.array(buffer.achieved_goals)
-            desired_goals = np.array(buffer.desired_goals)
-            actions = np.array(buffer.actions)
-            old_log_probs = np.array(buffer.log_probs)
-            returns = np.array(returns)
-            advantages = np.array(advantages)
-
-            # Normalize advantages
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-            advantages *= reward_scaling
-
-            #  Logarithmic Entropy Decay
-            entropy_coef = max(final_entropy_coef, initial_entropy_coef * np.exp(-0.0001 * episode))
-
-            # Optimize policy for ppo_epochs
-            for _ in range(ppo_epochs):
-                indices = np.arange(len(buffer.rewards))
-                np.random.shuffle(indices)
-                for start in range(0, len(buffer.rewards), mini_batch_size):
-                    end = start + mini_batch_size
-                    mb_indices = indices[start:end]
-
-                    batch_data = {
-                        'observations': observations[mb_indices],
-                        'achieved_goals': achieved_goals[mb_indices],
-                        'desired_goals': desired_goals[mb_indices],
-                        'actions': actions[mb_indices],
-                        'old_log_probs': old_log_probs[mb_indices],
-                        'returns': returns[mb_indices],
-                        'advantages': advantages[mb_indices],
-                    }
-
-                    #  Use Huber Loss Instead of MSE for Stability
-                    total_loss, policy_loss, value_loss = agent.compute_loss(
-                        batch_data, gamma, gae_lambda, clip_epsilon, value_loss_coef, entropy_coef
-                    )
-
-                    # Track gradient norm
-                    agent.optimizer.zero_grad()
-                    total_loss.backward()
-                    grad_norm = torch.nn.utils.clip_grad_norm_(agent.network.parameters(), max_grad_norm)
-                    agent.optimizer.step()
-
-                    # Store losses
-                    policy_losses.append(policy_loss.item())
-                    value_losses.append(value_loss.item())
-                    total_losses.append(total_loss.item())
-
-                    # Data (use your actual variables here)
-                    print("+------------------+------------------+")
-                    print(f"| {'Episode':<16} | {episode:<16} |")
-                    print(f"| {'Grad Norm':<16} | {grad_norm:<16.3f} |")
-                    print(f"| {'Policy Loss':<16} | {policy_loss.item():<16.4f} |")
-                    print(f"| {'Value Loss':<16} | {value_loss.item():<16.4f} |")
-                    print(f"| {'Step':<16} | {step:<16} |")
-                    print(f"| {'Distance':<16} | {distance_to_goal:<16.4f} |")
-                    print(f"| {'Raw Reward':<16} | {-distance_to_goal:<16.4f} |")
-                    print(f"| {'Final Reward':<16} | {reward:<16.4f} |")
-                    print("+------------------+------------------+")
-
-
-            # Clear buffer
-            buffer.clear()
-
-        if done:
-            break
-
-                # Step the environment
-        next_state, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
+            raw_reward += 10  
+        raw_reward += 5 * (1 - distance_to_goal)
 
         # 🟢 Normalize & Clip Reward
-        raw_reward = reward  # Store raw reward before normalization
-        reward = reward_normalizer.normalize(reward)
-        reward = np.clip(reward, -10, 10)
+        normalized_reward = reward_normalizer.normalize(raw_reward)
+        final_reward = np.clip(normalized_reward, -10, 10)
 
-        # 🟢 Print reward details every 10 steps
+        # 🟢 Print Reward Debugging
         if step % 10 == 0:
-            print(f"[Step {step}] Raw Reward: {raw_reward:.4f} | Normalized: {reward:.4f} | Distance: {np.linalg.norm(desired_goal - achieved_goal):.4f}")
+            print(f"[Step {step}] Raw Reward: {raw_reward:.4f} | Normalized: {normalized_reward:.4f} | Final Reward: {final_reward:.4f}")
 
         # Store transition in buffer
         buffer.observations.append(observation)
@@ -241,10 +138,10 @@ while episode < 1000:
         buffer.actions.append(action)
         buffer.log_probs.append(log_prob)
         buffer.values.append(value)
-        buffer.rewards.append(reward)
+        buffer.rewards.append(final_reward)
         buffer.dones.append(done)
 
-        episode_rewards += reward
+        episode_rewards += final_reward
 
         # Move to next state
         observation = next_state['observation']
@@ -279,50 +176,66 @@ while episode < 1000:
             # Normalize advantages
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            # 🟢 Track entropy decay
-            entropy_coef = max(final_entropy_coef, entropy_coef * np.exp(-0.00001 * episode))
-            print(f"[Episode {episode}] Updated Entropy Coef: {entropy_coef:.6f}")
+            # 🟢 Logarithmic Entropy Decay
+            entropy_coef = max(final_entropy_coef, initial_entropy_coef * np.exp(-0.0001 * episode))
 
-            # PPO Optimization
+
+
             for _ in range(ppo_epochs):
-                agent.optimizer.zero_grad()
-                total_loss, policy_loss, value_loss = agent.compute_loss(
-                    batch_data, gamma, gae_lambda, clip_epsilon, value_loss_coef, entropy_coef
-                )
+    total_loss, policy_loss, value_loss = agent.compute_loss(
+        {
+            'observations': np.array(buffer.observations),
+            'achieved_goals': np.array(buffer.achieved_goals),
+            'desired_goals': np.array(buffer.desired_goals),
+            'actions': np.array(buffer.actions),
+            'old_log_probs': np.array(buffer.log_probs),
+            'returns': np.array(returns),
+            'advantages': np.array(advantages),
+        }, gamma, gae_lambda, clip_epsilon, value_loss_coef, entropy_coef
+    )
 
-                # Apply gradient clipping
-                grad_norm = torch.nn.utils.clip_grad_norm_(agent.network.parameters(), max_grad_norm)
-                agent.optimizer.step()
+            # Apply gradient clipping
+            agent.optimizer.zero_grad()
+            total_loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(agent.network.parameters(), max_grad_norm)
+            agent.optimizer.step()
+        
+            # 🟢 Retrieve values from buffer for correct logging
+            last_idx = -1  # Get the most recent data point in the buffer
+            last_distance = np.linalg.norm(buffer.desired_goals[last_idx] - buffer.achieved_goals[last_idx])
+            last_raw_reward = buffer.rewards[last_idx] / reward_scaling
+            last_final_reward = buffer.rewards[last_idx]
+        
+            # 🟢 CALL THE PRINT FUNCTION HERE WITH CORRECT VALUES
+            print_training_log(
+                episode=episode,
+                step=step,
+                grad_norm=grad_norm,
+                policy_loss=policy_loss.item(),
+                value_loss=value_loss.item(),
+                distance_to_goal=last_distance,   # ✅ Updated to use the latest buffer value
+                raw_reward=last_raw_reward,       # ✅ Updated to use the latest buffer value
+                final_reward=last_final_reward    # ✅ Updated to use the latest buffer value
+            )
 
-                # 🟢 Print gradient norm and loss values every update
-                print(f"[Update] Grad Norm: {grad_norm:.3f} | Policy Loss: {policy_loss:.6f} | Value Loss: {value_loss:.6f}")
 
-                # Store losses for logging
-                policy_losses.append(policy_loss.item())
-                value_losses.append(value_loss.item())
-                total_losses.append(total_loss.item())
-
-            # 🟢 Monitor Value-to-Policy Loss Ratio
-            if len(value_losses) > 10:
-                loss_ratio = np.mean(value_losses[-10:]) / (np.mean(policy_losses[-10:]) + 1e-8)
-                print(f"[Loss Ratio] Value/Policy Loss Ratio: {loss_ratio:.2f}")
+            buffer.clear()
 
         if done:
             break
 
     episode += 1
     rewards_per_episode.append(episode_rewards)
+    print(f"✅ [Episode {episode}] Completed | Total Reward: {episode_rewards:.4f} | Steps: {total_steps}")
 
-    # # Monitor Value-to-Policy Loss Ratio
-    # if len(value_losses) > 10:
-    #     print(f"Value Loss Ratio: {np.mean(value_losses[-10:]) / (np.mean(policy_losses[-10:]) + 1e-8):.2f}")
 
-    # # Save model every 1,000 episodes
-    # if episode % 1000 == 0:
-    #     torch.save(agent.network.state_dict(), f"policy_ep_{episode}.pth")
-    #     print(f"✅ Saved model at episode {episode}")
+torch.save(agent.network.state_dict(), "final_optimized_policy_1000.pth")
+print("Policy saved as 'final_optimized_policy.pth'")
 
 env.close()
+
+
+
 # Plot training results
 
 # Plot rewards per episode
@@ -364,3 +277,4 @@ plt.title("Total Loss during Training")
 plt.legend()
 plt.grid(True)
 plt.show()
+
