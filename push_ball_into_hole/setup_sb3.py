@@ -119,7 +119,7 @@ model = PPO(
 model.set_logger(logger)
 
 # Train the model with custom callback
-timesteps =  5_000_000  
+timesteps = 500  
 metrics_callback = CustomMetricsCallback()
 model.learn(total_timesteps=timesteps, callback=metrics_callback)
 
