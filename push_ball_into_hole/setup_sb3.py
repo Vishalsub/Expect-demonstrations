@@ -123,8 +123,9 @@ timesteps =  5_000_000
 metrics_callback = CustomMetricsCallback()
 model.learn(total_timesteps=timesteps, callback=metrics_callback)
 
+
 # Save the trained model
-model_path = "ppo_pushing_ball3.zip"
+model_path = "ppo_training_models_sb3/ppo_pushing_ball3.zip"
 model.save(model_path)
 print(f"✅ Model saved as '{model_path}'")
 

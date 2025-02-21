@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from gymnasium.utils.ezpickle import EzPickle  # Enables pickling/unpickling for easy environment saving/loading
+from gymnasium.utils.ezpickle import EzPickle  
 from base import MujocoSimulation
 
 # Define the XML model path for the Mujoco simulation
@@ -16,7 +16,7 @@ class PushingBallEnv(MujocoSimulation, EzPickle):
             "robot0:slide0": 0.405,  # X-axis position
             "robot0:slide1": 0.48,   # Y-axis position
             "robot0:slide2": 0.0,    # Z-axis position
-            "object0:joint": [1.25, 0.53, 0.4, 1.0, 0.0, 0.0, 0.0],  # Object position & orientation
+            "object0:joint": [1.25, 0.53, 0.4, 1.0, 0.0, 0.0, 0.0],  
         }
 
         # Initialize Mujoco Simulation with parameters
@@ -46,19 +46,18 @@ def compute_reward(self, achieved_goal, desired_goal, info):
     """
     distance = np.linalg.norm(achieved_goal - desired_goal)
 
-    # Stronger negative reward for distance
+   
     reward = -distance * 30  
 
-    # Bigger reward for reaching the goal
+    
     if distance < 0.05:
-        reward += 100  # Increased from 20
+        reward += 100  
     elif distance < 0.1:
-        reward += 50  # Increased from 10
+        reward += 50  
 
-    # Encourage movement toward the goal
     reward += 25 * (1 - distance)
 
-    # Clip rewards to prevent extreme values
+
     reward = np.clip(reward, -50, 50)
 
     return np.array([reward], dtype=np.float32)
