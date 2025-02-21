@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from PPO_network import PushNetwork, PPOAgent
+import os 
 
 # Register the custom Push environment
 gym.register(
@@ -19,21 +20,21 @@ network = PushNetwork(obs_dim=25, goal_dim=3, action_dim=4)
 agent = PPOAgent(network)
 
 # Optimized Hyperparameters
-learning_rate = 3e-5
+learning_rate = 1e-5
 gamma = 0.99
 gae_lambda = 0.95
-clip_epsilon = 0.2
-initial_entropy_coef = 0.01
+clip_epsilon = 1.0
+initial_entropy_coef = 0.02
 final_entropy_coef = 0.0005
 decay_rate = 0.999
 value_loss_coef = 0.5
-max_grad_norm = 0.5
-num_epochs = 1000
-num_steps_per_update = 200
+max_grad_norm = 1.0
+num_epochs = 15000
+num_steps_per_update = 512
 mini_batch_size = 64
 ppo_epochs = 10
 max_steps_per_episode = 1001
-reward_scaling = 0.1
+reward_scaling = 0.001
 
 # Rollout buffer
 class RolloutBuffer:
@@ -69,6 +70,22 @@ total_losses = []
 total_steps = 0
 episode = 0
 
+def print_training_log(episode, step, policy_loss, value_loss, distance_to_goal, raw_reward, final_reward):
+    print("\n+----------------------+----------------------+")
+    print(f"| {'Metric':<20} | {'Value':<20} |")
+    print("+----------------------+----------------------+")
+    print(f"| {'Episode':<20} | {episode:<20} |")
+    print(f"| {'Step':<20} | {step:<20} |")
+    print(f"| {'Policy Loss':<20} | {policy_loss:<20.6f} |")
+    print(f"| {'Value Loss':<20} | {value_loss:<20.6f} |")
+    print(f"| {'Distance to Goal':<20} | {distance_to_goal:<20.4f} |")
+    print(f"| {'Raw Reward':<20} | {raw_reward:<20.4f} |")
+    print(f"| {'Final Reward':<20} | {final_reward:<20.4f} |")
+    print("+----------------------+----------------------+\n")
+
+
+
+
 while episode < num_epochs:
     state, info = env.reset()
     observation = state['observation']
@@ -90,7 +107,9 @@ while episode < num_epochs:
         distance_to_goal = np.linalg.norm(desired_goal - achieved_goal)
         reward = -distance_to_goal  
         if distance_to_goal < 0.05:
-            reward += 10  
+            reward += 50  
+        if distance_to_goal < 0.1:
+            reward += 10
         reward += 5 * (1 - distance_to_goal)
 
         # Store transition in buffer
@@ -179,6 +198,25 @@ while episode < num_epochs:
                     value_losses.append(value_loss.item())
                     total_losses.append(total_loss.item())
 
+                    last_idx = -1  # Get the most recent data point in the buffer
+                    last_distance = np.linalg.norm(buffer.desired_goals[last_idx] - buffer.achieved_goals[last_idx])
+                    last_raw_reward = buffer.rewards[last_idx] / reward_scaling
+                    last_final_reward = buffer.rewards[last_idx]
+   
+
+                    # CALL THE PRINT FUNCTION HERE WITH CORRECT VALUES
+                    print_training_log(
+                        episode=episode,
+                        step=step,
+                        policy_loss=policy_loss.item(),
+                        value_loss=value_loss.item(),
+                        distance_to_goal=last_distance,   
+                        raw_reward=last_raw_reward,       
+                        final_reward=last_final_reward    
+                    )
+                    
+                    print(f"[Step {step}] | Reward: {reward:.4f}")
+
             # Clear buffer
             buffer.clear()
 
@@ -189,16 +227,20 @@ while episode < num_epochs:
     rewards_per_episode.append(episode_rewards)
     print(f"Episode {episode} completed. Total Reward: {episode_rewards}")
 
-torch.save(agent.network.state_dict(), "final_optimized_policy_1000.pth")
+torch.save(agent.network.state_dict(), "final_optimized_policy_feb-1000.pth")
 print("Policy saved as 'final_optimized_policy.pth'")
 
 env.close()
+
+# Define the folder where you want to save the plots
+save_folder = "training_plots_setup_ppo_1"
+os.makedirs(save_folder, exist_ok=True)  
 
 
 
 # Plot training results
 
-# Plot rewards per episode
+# Plot rewards per episode# Plot rewards per episode and save it
 plt.figure(figsize=(10, 5))
 plt.plot(rewards_per_episode, label="Total Reward per Episode")
 plt.xlabel("Episode")
@@ -206,9 +248,10 @@ plt.ylabel("Total Reward")
 plt.title("Total Reward per Episode")
 plt.legend()
 plt.grid(True)
-plt.show()
+plt.savefig(os.path.join(save_folder, "total_reward_per_episode.png"))  
+plt.close()  
 
-# Plot policy loss
+# Plot policy loss and save it
 plt.figure(figsize=(10, 5))
 plt.plot(policy_losses, label="Policy Loss")
 plt.xlabel("Update Step")
@@ -216,9 +259,10 @@ plt.ylabel("Loss")
 plt.title("Policy Loss during Training")
 plt.legend()
 plt.grid(True)
-plt.show()
+plt.savefig(os.path.join(save_folder, "policy_loss.png"))
+plt.close()
 
-# Plot value loss
+# Plot value loss and save it
 plt.figure(figsize=(10, 5))
 plt.plot(value_losses, label="Value Loss")
 plt.xlabel("Update Step")
@@ -226,9 +270,10 @@ plt.ylabel("Loss")
 plt.title("Value Loss during Training")
 plt.legend()
 plt.grid(True)
-plt.show()
+plt.savefig(os.path.join(save_folder, "value_loss.png"))
+plt.close()
 
-# Plot total loss
+# Plot total loss and save it
 plt.figure(figsize=(10, 5))
 plt.plot(total_losses, label="Total Loss")
 plt.xlabel("Update Step")
@@ -236,4 +281,7 @@ plt.ylabel("Loss")
 plt.title("Total Loss during Training")
 plt.legend()
 plt.grid(True)
-plt.show()
+plt.savefig(os.path.join(save_folder, "total_loss.png"))
+plt.close()
+
+print(f"Plots saved in the folder: {save_folder}")
