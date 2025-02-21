@@ -1,55 +1,64 @@
 import os
-
-from gymnasium.utils.ezpickle import EzPickle #Enables pickling and unpickling of the environment, facilitating serialization, which is helpful for saving and loading simulations.
-
+import numpy as np
+from gymnasium.utils.ezpickle import EzPickle  # Enables pickling/unpickling for easy environment saving/loading
 from base import MujocoSimulation
 
-# Use os.path.expanduser to handle the tilde (~) for the home directory
+# Define the XML model path for the Mujoco simulation
 MODEL_XML_PATH = os.path.join(os.path.dirname(__file__), "assets", "pushxml", "push.xml")
-
 
 
 class PushingBallEnv(MujocoSimulation, EzPickle):
     def __init__(self, reward_type="dense", **kwargs):
-        
+        """
+        Initializes the PushingBall environment.
+        """
         initial_qpos = {           
-            "robot0:slide0": 0.405,
-            "robot0:slide1": 0.48,
-            "robot0:slide2": 0.0,
-            "object0:joint": [1.25, 0.53, 0.4, 1.0, 0.0, 0.0, 0.0],
-
-
-            #From our xml files, robot0:slide0, robot0:slide1, robot0:slide2 refer to joints in the simulation that allow the robot's base or end_effector to move along xyz axes respectively.
-            #Object0:joint refers to the joint of the object that the robot arm will interact with, and its value is [0, 0 ,0 ,0, 0, 0, 0], where the first 3 values are x y z position, and the last four values are orientation in quaternion format.
-
-            #We have set the initial values above.
+            "robot0:slide0": 0.405,  # X-axis position
+            "robot0:slide1": 0.48,   # Y-axis position
+            "robot0:slide2": 0.0,    # Z-axis position
+            "object0:joint": [1.25, 0.53, 0.4, 1.0, 0.0, 0.0, 0.0],  # Object position & orientation
         }
+
+        # Initialize Mujoco Simulation with parameters
         MujocoSimulation.__init__(
             self,
-            model_path=MODEL_XML_PATH,  # Path to the XML model file that defines the environment setup and robot.
-
-            has_object=True,  # Specifies whether the environment contains an object to interact with.
-
-            block_end_effector=True,  # Restricts end-effector movement, ensuring it remains in the same orientation.
-
-            n_substeps=20,  # Number of substeps per action, affecting the control frequency of the robot.
-
-            obj_range=0.2,  # Range within which the object's initial position is randomly selected. Position is chosen randomly within a square region centered around the robot's end effector
-
-            target_range=0.2,  # Range within which the target position is randomly selected. Position is chosen randomly within a square region centered around the robot's end effector
-
-            distance_threshold=0.05,  # Distance from the goal at which the task is considered successfully completed.
-
-            initial_qpos=initial_qpos,  # Dictionary specifying the initial joint positions and orientations of the robot and object.
-
-            reward_type=reward_type,  # Defines the type of reward function to be used ('sparse' or 'dense').
-            
-            ball_randomize_positions = False, # to randomize the ball position
-
-            hole_randomize_positions = False, #to randomize the hole position
-
-            **kwargs  # Any additional arguments passed to the environment.
-
+            model_path=MODEL_XML_PATH,
+            has_object=True,  
+            block_end_effector=True,  
+            n_substeps=20,  
+            obj_range=0.2,  
+            target_range=0.2,  
+            distance_threshold=0.05,  
+            initial_qpos=initial_qpos,  
+            reward_type=reward_type,  
+            ball_randomize_positions=False,
+            hole_randomize_positions=False,
+            **kwargs
         )
 
         EzPickle.__init__(self, reward_type=reward_type, **kwargs)
+
+
+def compute_reward(self, achieved_goal, desired_goal, info):
+    """
+    Computes the reward based on the distance between achieved and desired goals.
+    Strengthens rewards for success and movement toward goal.
+    """
+    distance = np.linalg.norm(achieved_goal - desired_goal)
+
+    # Stronger negative reward for distance
+    reward = -distance * 30  
+
+    # Bigger reward for reaching the goal
+    if distance < 0.05:
+        reward += 100  # Increased from 20
+    elif distance < 0.1:
+        reward += 50  # Increased from 10
+
+    # Encourage movement toward the goal
+    reward += 25 * (1 - distance)
+
+    # Clip rewards to prevent extreme values
+    reward = np.clip(reward, -50, 50)
+
+    return np.array([reward], dtype=np.float32)
