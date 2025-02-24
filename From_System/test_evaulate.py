@@ -16,14 +16,29 @@ env = gym.make("PushingBall-v0", render_mode="human")
 # Load the trained model
 model = PPO.load("ppo_pushing_ball3")
 
+# Define environment boundaries (Assumption: Change as per your environment)
+BALL_POSITION_BOUNDS = [[-1.0, 1.0], [-1.0, 1.0]]  # x, y range
+GOAL_POSITION_BOUNDS = [[-1.0, 1.0], [-1.0, 1.0]]  # x, y range
+
 # Test the policy for multiple episodes with randomness
 num_test_episodes = 100  # Number of test episodes
 rewards_per_episode = []  # To store total rewards for each episode
 success_per_episode = []  # To store success for each episode
 
 for episode in range(num_test_episodes):
-    # Reset environment with randomized initialization if possible
-    obs, info = env.reset(seed=np.random.randint(0, 10000))  # Random seed for varied starts
+    # Generate random start position for ball
+    initial_ball_position = np.random.uniform(
+        BALL_POSITION_BOUNDS[0][0], BALL_POSITION_BOUNDS[0][1]), np.random.uniform(
+        BALL_POSITION_BOUNDS[1][0], BALL_POSITION_BOUNDS[1][1])
+
+    # Generate random goal position
+    goal_position = np.random.uniform(
+        GOAL_POSITION_BOUNDS[0][0], GOAL_POSITION_BOUNDS[0][1]), np.random.uniform(
+        GOAL_POSITION_BOUNDS[1][0], GOAL_POSITION_BOUNDS[1][1])
+
+    # Reset environment with randomized positions (Modify based on env API)
+    obs, info = env.reset(options={"ball_position": initial_ball_position, "goal_position": goal_position})
+
     done = False
     total_reward = 0
     success = False
@@ -46,7 +61,7 @@ for episode in range(num_test_episodes):
 
     rewards_per_episode.append(total_reward)
     success_per_episode.append(1 if success else 0)  # 1 for success, 0 otherwise
-    print(f"Episode {episode + 1}: Total Reward = {total_reward}, Success = {success}")
+    print(f"Episode {episode + 1}: Total Reward = {total_reward}, Success = {success}, Goal: {goal_position}, Ball Start: {initial_ball_position}")
 
 env.close()
 
