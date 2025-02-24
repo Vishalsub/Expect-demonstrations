@@ -1,76 +1,82 @@
 import gymnasium as gym
 import numpy as np
+import torch
 from stable_baselines3 import PPO
-import matplotlib.pyplot as plt
+from push import PushingBallEnv  # Import your custom environment
 
-# Register the custom environment
-gym.register(
-    id="PushingBall-v0",
-    entry_point="push:PushingBallEnv",  # Replace with the correct path
-    max_episode_steps=100,
-)
+# Load trained model
+model_path = "ppo_pushing_ball.zip"  # Update if needed
+model = PPO.load(model_path)
 
-# Initialize the environment
-env = gym.make("PushingBall-v0", render_mode="human")
+# Set up the environment
+env = gym.make("PushingBall-v0", render_mode=None)  # No rendering for speed
 
-# Load the trained model
-model = PPO.load("ppo_pushing_ball3")
+NUM_EPISODES = 1000  # Number of test episodes
+success_count = 0
+total_rewards = []
+perturbation_test = True  # Enable random perturbations for robustness test
 
-# Test the policy for multiple episodes with randomness
-num_test_episodes = 100  # Number of test episodes
-rewards_per_episode = []  # To store total rewards for each episode
-success_per_episode = []  # To store success for each episode
-
-for episode in range(num_test_episodes):
-    # Reset environment with randomized initialization if possible
-    obs, info = env.reset(seed=np.random.randint(0, 10000))  # Random seed for varied starts
+for episode in range(NUM_EPISODES):
+    obs, _ = env.reset()
     done = False
-    total_reward = 0
-    success = False
+    episode_reward = 0
 
     while not done:
-        # Predict the next action using the trained model (non-deterministic for testing)
-        action, _states = model.predict(obs, deterministic=False)  
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, done, _, info = env.step(action)
 
-        # Introduce slight noise in the action for robustness testing
-        action_noise = np.random.normal(0, 0.1, size=action.shape)  # Small Gaussian noise
-        action = np.clip(action + action_noise, env.action_space.low, env.action_space.high)
+        episode_reward += reward
 
-        obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-        done = terminated or truncated
+        # If perturbation test is enabled, apply small random noise to actions
+        if perturbation_test:
+            action += np.random.normal(0, 0.02, size=action.shape)  # Add small noise
 
-        # Check if success was achieved
-        if "is_success" in info and info["is_success"]:
-            success = True
+    total_rewards.append(episode_reward)
+    if info.get("is_success", False):  # Check success metric
+        success_count += 1
 
-    rewards_per_episode.append(total_reward)
-    success_per_episode.append(1 if success else 0)  # 1 for success, 0 otherwise
-    print(f"Episode {episode + 1}: Total Reward = {total_reward}, Success = {success}")
+    print(f"Episode {episode+1}/{NUM_EPISODES}: Reward = {episode_reward}, Success = {info.get('is_success', False)}")
+
+# Compute success rate
+success_rate = success_count / NUM_EPISODES
+avg_reward = np.mean(total_rewards)
+
+print("\n==== Evaluation Results ====")
+print(f"✅ Success Rate: {success_rate * 100:.2f}%")
+print(f"📊 Average Reward: {avg_reward:.2f}")
+
+# Save results for plotting
+np.save("evaluation_success_rate.npy", np.array(success_rate))
+np.save("evaluation_rewards.npy", np.array(total_rewards))
 
 env.close()
 
-# Visualization
-# Plot rewards per episode
-plt.figure(figsize=(10, 5))
-plt.plot(rewards_per_episode, label="Total Reward per Episode")
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Load evaluation results
+success_rate = np.load("evaluation_success_rate.npy")
+total_rewards = np.load("evaluation_rewards.npy")
+
+# Success rate plot
+plt.figure(figsize=(8, 5))
+plt.plot(np.cumsum(success_rate) / np.arange(1, len(success_rate) + 1), 'g.-', label="Cumulative Success Rate")
+plt.xlabel("Episode")
+plt.ylabel("Success Rate")
+plt.title("Cumulative Success Rate over Test Episodes")
+plt.legend()
+plt.grid()
+plt.savefig("cumulative_success_rate.png")
+plt.show()
+
+# Rewards plot
+plt.figure(figsize=(8, 5))
+plt.plot(total_rewards, 'b.-', label="Reward per Episode")
 plt.xlabel("Episode")
 plt.ylabel("Total Reward")
-plt.title("Rewards per Episode")
+plt.title("Rewards per Test Episode")
 plt.legend()
-plt.grid(True)
+plt.grid()
+plt.savefig("total_reward_per_episode.png")
 plt.show()
-
-# Plot success rate
-plt.figure(figsize=(10, 5))
-plt.bar(range(1, num_test_episodes + 1), success_per_episode, label="Success per Episode")
-plt.xlabel("Episode")
-plt.ylabel("Success (1 = Yes, 0 = No)")
-plt.title("Success per Episode")
-plt.legend()
-plt.grid(True)
-plt.show()
-
-# Print overall success rate
-overall_success_rate = sum(success_per_episode) / num_test_episodes * 100
-print(f"Overall Success Rate: {overall_success_rate:.2f}%")
