@@ -93,12 +93,14 @@ class SHAPCallback(BaseCallback):
         obs_tensor = torch.tensor(obs_samples, dtype=torch.float32)
 
         # Define SHAP explainer
-        def policy_fn(obs):
-            obs_tensor = torch.tensor(obs, dtype=torch.float32)
-            return self.model.policy.forward(obs_tensor).detach().numpy()
+        def policy_fn(obs_np):
+            obs_tensor = torch.tensor(obs_np, dtype=torch.float32)
+            with torch.no_grad():
+                return self.model.policy.forward(obs_tensor).numpy()  # Ensure output is NumPy
 
+        # Use the proper SHAP KernelExplainer
         explainer = shap.Explainer(policy_fn, obs_samples)
-        shap_values = explainer(obs_samples)
+        shap_values = explainer(obs_samples)  # Call the explainer correctly
 
         # Store SHAP values
         self.shap_values_history.append(shap_values)
@@ -111,6 +113,7 @@ class SHAPCallback(BaseCallback):
         plt.close()
 
         print(f"✅ SHAP Analysis Completed. Plot saved at {shap_plot_path}")
+
 
     def save_shap_trend(self):
         """
